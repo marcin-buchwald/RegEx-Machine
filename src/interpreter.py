@@ -74,11 +74,6 @@ class Interpreter:
     #   iterate over output_states of the step
     #       put every matching state on the next_turn list, with current step's position
 
-    # open topics:
-    # - how to handle text that don't match whole the pattern
-    #   that is to find a substring of the text that wholy matches the pattern
-    # - how to record parts of the text that match the pattern
-
     # loop over the text and call Interperter.match() for every character of the text
     def run(self):
         match_list = []
@@ -124,9 +119,12 @@ class Interpreter:
     def multi_match(self, position):
         """Return multiple matches starting at the position"""
 
+        # step_count = 0
+
         match_list = {}
 
         matched, match_len = self.nfa.is_matched(self.text, position)
+
         # check if the first node matched, if not, no match at all
         if not matched:
             if self.verbose > 1:
@@ -140,21 +138,20 @@ class Interpreter:
 
         while len(current_state_list) > 0 or len(next_state_list) > 0:
             if len(current_state_list) == 0:
+
+                # step_count += len(next_state_list)
+                # print("step cnt: ", step_count)
+
                 current_state_list = next_state_list
                 next_state_list = []
 
             current_step = current_state_list.pop(0)
 
-            if current_step.step_no > 50:
-                # print("Bailing out at: " + str(current_step.step_no))
-                # break
-                pass
-
             if self.verbose > 1:
                 print("State: ", current_step.state.state_type, " ", current_step.state.state_label)
                 print("Match: ", self.text[current_step.position:current_step.position + current_step.match_len])
 
-                # match found, record it and move on
+            # match found, record it and move on
             if current_step.state.state_type == "end":
                 match_result = MatchResult.from_steps(current_step)
 
@@ -164,10 +161,8 @@ class Interpreter:
                     match_list[match_key] = match_result
                 continue
 
+            # prepare list of current state's output states, to append it (if they match) to the next step list
             output_state_list = current_step.state.output_states + current_step.state.loop_back_output_states
-
-            # print("output length: ", len(current_state_list))
-
             if current_step.state.state_type == "recurrence":
                 rep_counter = self.get_rep_counter(current_step, current_step.state.state_label)
 
@@ -180,25 +175,21 @@ class Interpreter:
 
             for output_state in output_state_list:
                 # check if the step is already on the list
-                append = True
-                for sss in next_state_list:
-                    if output_state == sss.state and current_step.position + current_step.match_len == sss.position:
-                        append = False
-                else:
-                    # if this is already on the list, go next
-                    if not append:
-                        continue
+                if not self.is_in_list(current_step, output_state, next_state_list):
+                    continue
 
+                # check for recurrence cycles without char matching
                 if current_step.state.state_type == "recurrence" and output_state.state_type == "recurrence":
-                    # check for recurrence cycles without char matching
                     if not self.can_go_recurrent(current_step, output_state.state_label):
                         continue
 
+                # check if output state matches text at a position, first check if the state is a back reference
                 if output_state.state_type == "back reference":
                     reference = self.get_back_ref_text(int(output_state.ref_no), current_step)
                     matched, new_match_len = output_state.is_matched(self.text,
                                                                      current_step.position + current_step.match_len,
                                                                      reference)
+                # check for the types of state
                 else:
                     matched, new_match_len = output_state.is_matched(self.text,
                                                                      current_step.position + current_step.match_len)
@@ -212,6 +203,7 @@ class Interpreter:
                         current_step.step_no + 1
                     )
 
+                    # update repetition counter if came here via loop_back_output_state (i.e. from within the loop)
                     if output_state.state_type == "recurrence":
                         if output_state not in current_step.state.loop_back_output_states:
                             # reset output_state's counter
@@ -237,6 +229,17 @@ class Interpreter:
                     # print("match text for group: ", match_group, " = ", match_text)
                     # if match text is not empty, save it in the current step
                     step.back_ref_text = match_text
+
+    @staticmethod
+    def is_in_list(current_step, output_state, next_state_list):
+        """
+        Helper function to avoid adding steps that contain states already on the list and with positions
+        greater or equal to checked step
+        """
+        for sss in next_state_list:
+            if output_state == sss.state and current_step.position + current_step.match_len >= sss.position:
+                return False
+        return True
 
     @staticmethod
     def find_match_text(match_group_name, match_end_step):

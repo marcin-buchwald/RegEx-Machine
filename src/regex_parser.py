@@ -85,7 +85,10 @@ class RegExParser:
             return True, state, [state]
 
         if self.current_token == ("meta", "("):
-            print("--------------- match group! ----------------")
+            # register a match group
+            self.nsa.max_match_group_no += 1
+            max_match_group_no = self.nsa.max_match_group_no
+
             self.next_token()
 
             result, expression_state, expression_state_output = self.expression()
@@ -101,11 +104,9 @@ class RegExParser:
                     self.nsa.add_node(match_state)
                     expression_state = match_state
 
-                # register a match group and add its start and end points to input and output states
-                self.nsa.max_match_group_no += 1
-                expression_state.match_group_start += [self.nsa.max_match_group_no]
+                expression_state.match_group_start += [max_match_group_no]
                 for state in expression_state_output:
-                    state.match_group_end += [self.nsa.max_match_group_no]
+                    state.match_group_end += [max_match_group_no]
 
                 self.next_token()
                 return True, expression_state, expression_state_output
@@ -268,7 +269,6 @@ class RegExParser:
                     return False, None, None
 
                 rep_label += self.current_token[1]
-            print("min_rep: " + str(min_rep) + " max_rep: " + str(max_rep))
 
             recurring_state = RecurringState("Rec_" + rep_label + "_" + str(len(self.rec_list)), [atom_state], min_rep,
                                              max_rep)
