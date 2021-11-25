@@ -3,9 +3,9 @@ class Tokenizer:
     Tokenizer class is used to devide input pattern into tokens, that is chunks of text with a type.
     Type can be:
     * string -> any text not containing meta characters, e.g. abc\xFA12\n3
-    * meta -> ().*+[]-\^
-    * end
-    * error
+    * meta -> ().*+[]-\^ also anchors, e.g. ^ $
+    * end -> end token
+    * error -> error token, contains error message
     * escaped
     * setelement -> e.g. a-z A-Z a x 1
     """
@@ -13,7 +13,7 @@ class Tokenizer:
     def __init__(self, regex_pattern):
         self.regExText = regex_pattern
         self.position = 0
-        self.meta = "().*+?[]-\\^{}|,"
+        self.meta = "().*+?[]-\\^{}|,$"
         self.insideCharSet = False
         self.verbose = True
         self.current_token = None
@@ -21,7 +21,7 @@ class Tokenizer:
     def get_next_token(self):
         """Main method, returns a single next token"""
 
-        # Handling chars inside [], pt 1, covrring ranges, e.g. A-Z and regular chars
+        # Handling chars inside [], pt 1, covering ranges, e.g. A-Z and regular chars
         if self.insideCharSet and self.regExText[self.position] not in ["^", "\\",
                                                                         "]"]:  # inside [] all chars should be took separatelly
             if self.position + 1 >= len(self.regExText):
@@ -46,8 +46,8 @@ class Tokenizer:
             char_string += self.regExText[self.position]
             self.position += 1
 
-            # chars preceding recurrence meta, like * or + should be taken separately
-            if self.position < len(self.regExText) and self.regExText[self.position] in "+*?{":
+            # chars preceding recurrence meta, or anchors, like *, + or $ should be taken separately
+            if self.position < len(self.regExText) and self.regExText[self.position] in "+*?{^$":
                 # rollback
                 if len(char_string) > 1:
                     self.position -= 1
@@ -65,7 +65,7 @@ class Tokenizer:
                 self.position += 1
                 escaped_char = self.regExText[self.position]
 
-                if escaped_char in "tnrfvsSwWdD" or escaped_char in self.meta:
+                if escaped_char in "tnrfvsSwWdDbAZ" or escaped_char in self.meta:
                     self.position += 1
                     return "escaped" if not self.insideCharSet else "escaped setelement", escaped_char
 
@@ -103,6 +103,7 @@ class Tokenizer:
                 self.insideCharSet = False
 
             self.position += 1
+
             return "meta", meta_char
         elif self.position == len(self.regExText):
             return "end", None

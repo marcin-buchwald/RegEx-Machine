@@ -247,3 +247,56 @@ class BackReferenceState(State):
 
         match = text[position:position + len(reference)] == reference
         return match, len(reference) if match else 0
+
+
+# state representing boundaries, like beginning or end of text, words, lines, etc
+class BoundaryState(State):
+    boundary_mapping = {
+        "^": "start text or line",
+        "$": "end text or line",
+        "b": "word boundary",
+        "A": "start text",
+        "Z": "end text"
+    }
+
+    def __init__(self, state_label, boundary_type, output_states):
+        super().__init__("boundary", state_label, None, output_states)
+        self.boundary_type = BoundaryState.boundary_mapping[boundary_type]
+
+    def is_matched(self, text, position):
+        if position == len(text):
+            if self.boundary_type in ["end text", "end text or line", "word boundary"]:
+                return True, 0
+            else:
+                return False, 0
+
+        if self.boundary_type == "start text":
+            return position == 0, 0
+
+        if self.boundary_type == "end text":
+            return position == len(text) - 1, 0
+
+        if self.boundary_type == "start text or line":
+            if position > 0 and text[position-1] in "\n\r":
+                return True, 0
+            return position == 0, 0
+
+        if self.boundary_type == "end text or line":
+            # check for end of line, end of text is handled above along with other types of text end types
+            if position < len(text):
+                return text[position] in "\n\r", 0
+
+        if self.boundary_type == "word boundary":
+            non_word_chars = " \t\n\r.,;:?!-><\()/"
+
+            # print("position:", position, ", len:", len(text))
+            if text[position] not in non_word_chars and (position == len(text) - 1 or text[position+1] in non_word_chars):
+                return True, 0
+            if text[position] not in non_word_chars and (position == 0 or text[position-1] in non_word_chars):
+                return True, 0
+            if text[position] in non_word_chars and (position == len(text) - 1 or text[position+1] not in non_word_chars):
+                return True, 0
+            if text[position] in non_word_chars and (position == 0 or text[position-1] not in non_word_chars):
+                return True, 0
+
+        return False, 0

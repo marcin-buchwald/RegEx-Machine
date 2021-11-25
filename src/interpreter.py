@@ -4,7 +4,7 @@ class Step:
         self.position = position  # position in text, the beginning of the string to be matched
         self.match_len = match_len
         self.text = text
-        self.prev_step = prev_step
+        self.prev_step: Step = prev_step
         self.rep_counter = 1  # for recurrent steps
         self.step_no = step_no
         self.back_ref_text = None
@@ -77,8 +77,15 @@ class Interpreter:
     # loop over the text and call Interperter.match() for every character of the text
     def run(self):
         match_list = []
-        for pos in range(len(self.text)):
-            match_list += self.multi_match(pos)
+        max_reached_position = 0
+        while max_reached_position < len(self.text):
+        # for pos in range(len(self.text)):
+            ret = self.match(max_reached_position)
+            if ret is not None:
+                max_reached_position = ret.position + len(ret.matched_text)
+                match_list += [ret]
+            else:
+                max_reached_position += 1
 
         return match_list
 
@@ -116,31 +123,36 @@ class Interpreter:
 
         return True
 
-    def multi_match(self, position):
-        """Return multiple matches starting at the position"""
+    def match(self, position):
+        """Return matching string starting at the position"""
 
         # step_count = 0
 
-        match_list = {}
+        # match_list = {}
+        max_position_reached = position
+        max_match_step = None
 
         matched, match_len = self.nfa.is_matched(self.text, position)
 
         # check if the first node matched, if not, no match at all
         if not matched:
             if self.verbose > 1:
-                print("No match")
-            return []
+                print("No match at position ", position)
+            # return []
+            return None
 
         step = Step(self.nfa, position, match_len, self.text, None, 0)
         self.define_match_groups(step)
         current_state_list = [step]
         next_state_list = []
 
+        # step_count = 1
+
         while len(current_state_list) > 0 or len(next_state_list) > 0:
             if len(current_state_list) == 0:
-
-                # step_count += len(next_state_list)
+                # step_count = len(next_state_list)
                 # print("step cnt: ", step_count)
+                # print("pos: ", current_step.position)
 
                 current_state_list = next_state_list
                 next_state_list = []
@@ -153,12 +165,16 @@ class Interpreter:
 
             # match found, record it and move on
             if current_step.state.state_type == "end":
-                match_result = MatchResult.from_steps(current_step)
-
                 # to avoid duplicates in the match_list, check if the match is already there
-                match_key = match_result.to_string()
-                if match_key not in match_list:
-                    match_list[match_key] = match_result
+                # if current_step.position not in match_list:
+                if max_position_reached < current_step.position:
+                    max_position_reached = current_step.position
+                    max_match_step = current_step
+
+                    # if max_position_reached in match_list:
+                    #    match_list.pop(max_position_reached)
+                    # match_result = MatchResult.from_steps(current_step)
+                    # match_list[max_position_reached] = match_result
                 continue
 
             # prepare list of current state's output states, to append it (if they match) to the next step list
@@ -175,7 +191,7 @@ class Interpreter:
 
             for output_state in output_state_list:
                 # check if the step is already on the list
-                if not self.is_in_list(current_step, output_state, next_state_list):
+                if not self.add_to_list(current_step, output_state, next_state_list):
                     continue
 
                 # check for recurrence cycles without char matching
@@ -216,8 +232,10 @@ class Interpreter:
 
                     next_state_list.append(step)
                     self.define_match_groups(step)
-
-        return list(match_list.values())
+        if max_match_step is None:
+            return None
+        return MatchResult.from_steps(max_match_step)
+        # return list(match_list.values())
 
     def define_match_groups(self, step):
         # match groups
@@ -231,7 +249,7 @@ class Interpreter:
                     step.back_ref_text = match_text
 
     @staticmethod
-    def is_in_list(current_step, output_state, next_state_list):
+    def add_to_list(current_step, output_state, next_state_list):
         """
         Helper function to avoid adding steps that contain states already on the list and with positions
         greater or equal to checked step

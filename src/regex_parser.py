@@ -1,12 +1,12 @@
 from state_machine import State, MatchAllState, MultiMatchState, RecurringState, EndState, ExpressionState, NSA, \
-    NegativeMultiMatchState, BackReferenceState
+    NegativeMultiMatchState, BackReferenceState, BoundaryState
 from tokenizer import Tokenizer
 
 
 class RegExParser:
     def __init__(self, regex_pattern):
         self.tokenizer = Tokenizer(regex_pattern)
-        self.current_token = ("empty", None)
+        self.current_token: (str, str) = ("empty", None)
         self.verbose = 1
         self.group_list = []
         self.rec_list = []
@@ -61,6 +61,12 @@ class RegExParser:
 
         if self.current_token[0] in ["back reference"]:
             state = BackReferenceState("back_ref_" + self.current_token[1], self.current_token[1], [])
+            self.nsa.add_node(state)
+            self.next_token()
+            return True, state, [state]
+
+        if self.current_token in [("meta", "^"), ("meta", "$"), ("escaped", "b"), ("escaped", "A"), ("escaped", "Z")]:
+            state = BoundaryState("anchor: boundary" + self.current_token[1], self.current_token[1], [])
             self.nsa.add_node(state)
             self.next_token()
             return True, state, [state]
@@ -127,18 +133,18 @@ class RegExParser:
                 self.print_error("Atom: expected set element")
                 return False, None, None
 
-            match = self.current_token[1]
+            match:str = self.current_token[1]
             if negative_range:
-                multiMatchState = NegativeMultiMatchState("neg multi match: " + match, [], [])
+                multi_match_state = NegativeMultiMatchState("neg multi match: " + match, [], [])
             else:
-                multiMatchState = MultiMatchState("multi match: " + match, [], [])
+                multi_match_state = MultiMatchState("multi match: " + match, [], [])
             if self.current_token[0] == "range setelement":
-                multiMatchState.add_range(match)
+                multi_match_state.add_range(match)
             elif self.current_token[0] == "escaped setelement":
-                multiMatchState.add_multi(match)
+                multi_match_state.add_multi(match)
             else:
-                multiMatchState.match_values.append(match)
-            self.nsa.add_node(multiMatchState)
+                multi_match_state.match_values.append(match)
+            self.nsa.add_node(multi_match_state)
             self.next_token()
 
             while self.current_token != ("meta", "]"):
@@ -148,19 +154,19 @@ class RegExParser:
                     return False, None, None
 
                 if self.current_token[0] == "range setelement":
-                    multiMatchState.add_range(self.current_token[1])
-                    multiMatchState.state_label += self.current_token[1]
+                    multi_match_state.add_range(self.current_token[1])
+                    multi_match_state.state_label += self.current_token[1]
                 elif self.current_token[0] == "escaped setelement":
-                    multiMatchState.add_multi(self.current_token[1])
-                    multiMatchState.state_label += self.current_token[1]
+                    multi_match_state.add_multi(self.current_token[1])
+                    multi_match_state.state_label += self.current_token[1]
                 else:
-                    multiMatchState.match_values.append(self.current_token[1])
-                    multiMatchState.state_label += self.current_token[1]
+                    multi_match_state.match_values.append(self.current_token[1])
+                    multi_match_state.state_label += self.current_token[1]
 
                 self.next_token()
 
             self.next_token()
-            return True, multiMatchState, [multiMatchState]
+            return True, multi_match_state, [multi_match_state]
 
         if self.current_token in [("meta", "|"), ("meta", ")")]:
             return True
