@@ -1,16 +1,30 @@
-class NSA:
+import unicodedata
+
+import unicode
+import unicodedata2
+
+
+class NFA:
+    """Non Final State Automata class.
+    Contains list of all states, i.e. nodes of the NFA graph"""
+
     def __init__(self):
         self.node_list = []
         self.start_node = None
         self.end_node = None
 
-        self.max_match_group_no = -1  # values: numbers, e.g. 1, 2, 3
+        self.max_match_group_no = 0  # values: numbers, e.g. 1, 2, 3
 
     def add_node(self, node):
         self.node_list.append(node)
 
     def node_labels(self):
         return [n.state_label for n in self.node_list]
+
+    def print_graph(self):
+        for node in self.node_list:
+            print(node.to_string())
+            print(node.output_states_to_string())
 
     def edges(self):
         ret = [("Start", self.node_list[0].state_label)]
@@ -21,7 +35,7 @@ class NSA:
                 output_states += node.output_states
             if node.loop_back_output_states is not None:
                 output_states += node.loop_back_output_states
-            if node.state_type == "recurrence" and node.loop_output_states is not None:
+            if node.state_type == "repetition" and node.loop_output_states is not None:
                 output_states += node.loop_output_states
 
             ret += list(zip([node.state_label] * len(output_states), [n.state_label for n in output_states]))
@@ -30,6 +44,8 @@ class NSA:
 
 
 class State:
+    """Generic state node of NFA, used for string matching and as a base for other specialized states"""
+
     def __init__(self, state_type, state_label, match_values, output_states):
 
         # state_type:
@@ -38,10 +54,10 @@ class State:
         # - multi match (e.g [^A-D] \s [a-z]
         # - match all (.)
         # - match group (named group, tbd)
-        # Emty states (for structure):
+        # Empty states (for structure):
         # - expression (any expression in round brackets)
         # - choice (e.g xxx|yyy)
-        # - recurrence (e.g * + {1, 2}
+        # - repetition (e.g * + {1, 2}
         self.state_type = state_type
 
         # state_label, example of values:
@@ -60,7 +76,6 @@ class State:
         # - State.is_matched(text, start_position) for each member of the list
         # - start_position is the position directly after the text already matched
         # - moving to all the states that return True
-        # - recurrence is performed by invoking self.is_matched(text, start_position)
         self.output_states = output_states
 
         # this output is a special table for recurrent states, going though this edge will not reset repetition counter
@@ -76,11 +91,20 @@ class State:
         self.match_group_end = []  # values: list or match groups names that end here, e.g. ["match_1", "match_4"]
 
     def to_string(self):
-        ret = self.state_type + " " + self.state_label
+        """Returns a string containing important information about the state"""
+        ret = self.state_type + ": " + self.state_label
+
+        match_group_ret = ""
         for match_group in self.match_group_start:
-            ret += " Start match group " + str(match_group)
+            match_group_ret += " " + str(match_group)
+        if len(match_group_ret) > 0:
+            ret += "\n    match groups start: " + match_group_ret
+
+        match_group_ret = ""
         for match_group in self.match_group_end:
-            ret += " End match group " + str(match_group)
+            match_group_ret += " " + str(match_group)
+        if len(match_group_ret) > 0:
+            ret += "\n    match groups end: " + match_group_ret
 
         return ret
 
@@ -95,7 +119,8 @@ class State:
         return ret
 
     def is_matched(self, text, position):
-        # if self.state_type == "string match":
+        """Returns True if the text is matched at the given position, the second return value is length of the match
+        If there's no match, the method returns False, 0"""
         if position + len(self.match_values[0]) > len(text):
             return False, 0
 
@@ -104,6 +129,8 @@ class State:
 
 
 class EndState(State):
+    """End state indicates end of state machine, one per NFA"""
+
     def __init__(self):
         super().__init__("end", "end", None, None)
 
@@ -115,6 +142,14 @@ class EndState(State):
 
 
 class MultiMatchState(State):
+    """MultiMatchState handles
+    *    [] syntax, inclusive ranges, like a-z
+    *    . (match all)
+    *    \\s (match whitespace)
+    *    \\w (match word characters)
+    *    \\d (match digit)
+    """
+
     def __init__(self, state_label, match_values, output_states):
         super().__init__("multi match", state_label, match_values, output_states)
 
@@ -152,6 +187,80 @@ class MultiMatchState(State):
         return match, 1 if match else 0
 
 
+class MultiMatchUnicodeState(State):
+    """MultiMatchUnicodeState handles
+    *    unicode categories like L, Lo, etc
+    *    unicode groups with full names, like Letters, Other_Letters, etc
+    *    TODO: integrate with non-unicode multi match
+    """
+
+    def __init__(self, state_label, match_value, output_states, is_negative):
+        super().__init__("u-multi match", state_label, [], output_states)
+        self.is_negative = is_negative
+
+        # possible match types:
+        # * category
+        # * block
+        # * script
+        match_type = unicode.name_to_type[match_value]
+        if match_type == "long category":
+            self.match_values = unicode.category_hierarchy[unicode.long_to_short_category[match_value]]
+            self.match_type = "short subcategory"
+        elif match_type == "long subcategory":
+            self.match_values[0] = unicode.long_to_short_category[match_value]
+            self.match_type = "short subcategory"
+        elif match_type == "short category":
+            self.match_values = unicode.category_hierarchy[match_value]
+            self.match_type = "short subcategory"
+        else:
+            self.match_values = [match_value]
+            self.match_type = match_type
+
+    def is_matched(self, text, position):
+        if position >= len(text):
+            return False, 0
+        if self.match_type == "short subcategory":
+            if (not self.is_negative and unicodedata.category(text[position]) in self.match_values) or \
+                    (self.is_negative and unicodedata.category(text[position]) not in self.match_values):
+                return True, 1
+            else:
+                return False, 0
+        elif self.match_type == "block":
+            if (not self.is_negative and
+                    unicode.unicode_blocks[self.match_values[0]][0] <= ord(text[position])
+                    <= unicode.unicode_blocks[self.match_values[0]][1]) or\
+                    (self.is_negative and
+                     not (unicode.unicode_blocks[self.match_values[0]][0] <= ord(text[position])
+                          <= unicode.unicode_blocks[self.match_values[0]][1])):
+                return True, 1
+            else:
+                return False, 0
+        elif self.match_type == "script":
+            if (not self.is_negative and unicodedata2.script(text[position]) in self.match_values) or \
+                    (self.is_negative and unicodedata2.script(text[position]) not in self.match_values):
+                return True, 1
+            else:
+                return False, 0
+        else:
+            return False, 0
+
+
+class NegativeMultiMatchState(MultiMatchState):
+    """This state handles negative matches, that is: [^...] syntax. It's based on MultiMatchState and simply negates its
+    is_match value.
+    """
+
+    def __init__(self, state_label, match_values, output_states):
+        super().__init__(state_label, match_values, output_states)
+        self.state_label = "neg multi match"
+
+    def is_matched(self, text, position):
+        if position >= len(text):
+            return False, 0
+        match = text[position] not in self.match_values
+        return match, 1 if match else 0
+
+
 class MatchAllState(State):
     def __init__(self, state_label, output_states):
         super().__init__("match all", state_label, None, output_states)
@@ -162,48 +271,33 @@ class MatchAllState(State):
         return True, 1
 
 
-class NegativeMultiMatchState(MultiMatchState):
-    def __init__(self, state_label, match_values, output_states):
-        super().__init__(state_label, match_values, output_states)
-        self.state_label = "negative multi match"
-
-    def is_matched(self, text, position):
-        if position >= len(text):
-            return False, 0
-        match = text[position] not in self.match_values
-        return match, 1 if match else 0
-
-
-# how to handle recurrence?
-# for * that is {0, } it's easy, output 0: recurrence, output 1: go forward, no need to keep a count of recurrence
-# + =  {1, } or more general {m, n} there n >= m >= 0, two approaches:
-# - produce a state machine for every needed occurence (1 for +, m for {m, n})
-#   combine them in a chain and add recurrence state at the end
-#   This blows up the graph, but also simplifies traversal
-#   But how to handle {min, max} repetition? Example of s {4, 7}
-#
-#   s1-->--s2-->--s3-->--s4-->-+->--------------------------------|
-#                              |                                  v
-#                              +-->--s5--+-->---------------------|
-#                                        |                        v
-#                                        +-->--s6--+-->-----------+-->-
-#                                                  |              ^
-#                                                  +-->--s7-->----|
-#
-# - make sure state machine interpreter handles repetitions, that is keeps a counter of occurences and
-#   performs matches looping the state until m occurences is reached, only after exceeding the threshhold
-#   the interpreter is allowed to move to another state
-#   State needs to keep the min_rep and max_rep fields to the interpreter
 class RecurringState(State):
+    """The state represents repetitions (loops) like *, +, {m,m}
+    It has additional output array: loop_output_states that leads to nodes connected in the loop directly to it.
+    This is how recurrent node is connected:
+
+    (prev node)-output_states->-----------------------(rec node)--------------------------------------|--output_states->
+                               ^                                                                      |
+                               |--<--loop_back_output_states---(looped nodes)--<--loop_output_states--|
+
+    loop_output_states and loop_back_output_states are there for repetition counting and making sure rep count is in
+    range (min_rep, max_rep)
+    Each time interpreter goes though an edge from loop_back_output_states, it updates rep counter (+1).
+    If the interpreter goes though output_states edge to the rec node, the rep counter is set to 1.
+    This way nested loops work correctly.
+    If rep counter is below min_rep, the edges from output_states of rec node are not used.
+    If rep counter is above max_rep, the edges from loop_output_states of rec node are not used.
+    """
+
     def __init__(self, state_label, loop_output_states, min_rep, max_rep):
         self.min_rep = min_rep
         self.max_rep = max_rep
         self.loop_output_states = loop_output_states
 
-        super().__init__("recurrence", state_label, None, [])
+        super().__init__("repetition", state_label, None, [])
 
     def is_matched(self, text, position):
-        # recurrence and choice are states without match values, they simply let the interpreter enter them
+        # repetition and choice are states without match values, they simply let the interpreter enter them
         # than the interpreter iterates over output states to check if any of them match
         return True, 0
 
@@ -221,19 +315,21 @@ class RecurringState(State):
         return ret
 
 
-# top level state: represents a choice "|"
 class ExpressionState(State):
+    """top level state: represents a choice "|" """
+
     def __init__(self, state_label, output_states):
         super().__init__("expression", state_label, None, output_states)
 
     def is_matched(self, text, position):
-        # recurrence and choice are states without match values, they simply let the interpreter enter them
+        # repetition and choice are states without match values, they simply let the interpreter enter them
         # than the interpreter iterates over output states to check if any of them match
         return True, 0
 
 
-# top level state: represents a choice "|"
 class BackReferenceState(State):
+    """State representing back references to match groups, e.g. \\1, \\2, ..., \\99"""
+
     def __init__(self, state_label, ref_no, output_states):
         super().__init__("back reference", state_label, None, output_states)
         self.ref_no = ref_no
@@ -249,8 +345,9 @@ class BackReferenceState(State):
         return match, len(reference) if match else 0
 
 
-# state representing boundaries, like beginning or end of text, words, lines, etc
 class BoundaryState(State):
+    """state representing boundaries, like beginning or end of text, words, lines, etc"""
+
     boundary_mapping = {
         "^": "start text or line",
         "$": "end text or line",
@@ -260,7 +357,7 @@ class BoundaryState(State):
     }
 
     def __init__(self, state_label, boundary_type, output_states):
-        super().__init__("boundary", state_label, None, output_states)
+        super().__init__("anchor", state_label, None, output_states)
         self.boundary_type = BoundaryState.boundary_mapping[boundary_type]
 
     def is_matched(self, text, position):
@@ -277,7 +374,7 @@ class BoundaryState(State):
             return position == len(text) - 1, 0
 
         if self.boundary_type == "start text or line":
-            if position > 0 and text[position-1] in "\n\r":
+            if position > 0 and text[position - 1] in "\n\r":
                 return True, 0
             return position == 0, 0
 
@@ -287,16 +384,18 @@ class BoundaryState(State):
                 return text[position] in "\n\r", 0
 
         if self.boundary_type == "word boundary":
-            non_word_chars = " \t\n\r.,;:?!-><\()/"
+            non_word_chars = " \t\n\r.,;:?!-><\\()/"
 
             # print("position:", position, ", len:", len(text))
-            if text[position] not in non_word_chars and (position == len(text) - 1 or text[position+1] in non_word_chars):
+            if text[position] not in non_word_chars and (
+                    position == len(text) - 1 or text[position + 1] in non_word_chars):
                 return True, 0
-            if text[position] not in non_word_chars and (position == 0 or text[position-1] in non_word_chars):
+            if text[position] not in non_word_chars and (position == 0 or text[position - 1] in non_word_chars):
                 return True, 0
-            if text[position] in non_word_chars and (position == len(text) - 1 or text[position+1] not in non_word_chars):
+            if text[position] in non_word_chars and (
+                    position == len(text) - 1 or text[position + 1] not in non_word_chars):
                 return True, 0
-            if text[position] in non_word_chars and (position == 0 or text[position-1] not in non_word_chars):
+            if text[position] in non_word_chars and (position == 0 or text[position - 1] not in non_word_chars):
                 return True, 0
 
         return False, 0
